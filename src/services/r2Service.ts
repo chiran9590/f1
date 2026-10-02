@@ -1,195 +1,95 @@
-// Cloudflare R2 Service for file uploads with chunked/multipart support
-// Environment variables needed:
-// VITE_R2_ACCOUNT_ID
-// VITE_R2_ACCESS_KEY_ID
-// VITE_R2_SECRET_ACCESS_KEY
-// VITE_R2_BUCKET_NAME
+// Cloudflare R2 uploads via short-lived presigned URLs issued by the `r2-presign` Edge Function.
+// No R2 credentials exist in the browser.
+import { supabase, callFunction } from '../lib/supabase';
 
-interface UploadProgress {
+export interface UploadProgress {
   loaded: number;
   total: number;
   percentage: number;
 }
 
-interface UploadResult {
+export interface UploadResult {
   success: boolean;
   key: string;
-  url?: string;
   error?: string;
 }
 
+type Kind = 'tiles' | 'metadata';
+
+function putWithProgress(url: string, file: File, onProgress?: (p: UploadProgress) => void): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', url);
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress({ loaded: e.loaded, total: e.total, percentage: Math.round((e.loaded / e.total) * 100) });
+      }
+    };
+    xhr.onload = () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? resolve()
+        : reject(new Error(`R2 rejected the upload (HTTP ${xhr.status}). Check the bucket's access keys.`));
+    xhr.onerror = () =>
+      reject(new Error('Upload blocked by the browser. Add this site to the R2 bucket CORS rules (see README).'));
+    xhr.send(file);
+  });
+}
+
 class R2Service {
-  private accountId: string;
-  private accessKeyId: string;
-  private secretAccessKey: string;
-  private bucketName: string;
-
-  constructor() {
-    this.accountId = import.meta.env.VITE_R2_ACCOUNT_ID || '';
-    this.accessKeyId = import.meta.env.VITE_R2_ACCESS_KEY_ID || '';
-    this.secretAccessKey = import.meta.env.VITE_R2_SECRET_ACCESS_KEY || '';
-    this.bucketName = import.meta.env.VITE_R2_BUCKET_NAME || '';
-
-    if (!this.accountId || !this.accessKeyId || !this.secretAccessKey || !this.bucketName) {
-      console.warn('⚠️ R2 credentials not fully configured. File uploads will not work.');
-    }
-  }
-
-  /**
-   * Generate a presigned URL for direct upload to R2
-   * This is a simplified version - in production, you'd want a backend to sign requests
-   */
-  private getPublicUrl(key: string): string {
-    return `https://${this.bucketName}.${this.accountId}.r2.cloudflarestorage.com/${key}`;
-  }
-
-  /**
-   * Upload a file to R2 with chunked upload support for large files
-   */
+  /** Uploads one file for a club and records it in the `tiles` / `metadata` table. */
   async uploadFile(
     file: File,
-    clubName: string,
-    fileType: 'tiles' | 'metadata',
-    onProgress?: (progress: UploadProgress) => void
+    clubId: string,
+    kind: Kind,
+    onProgress?: (p: UploadProgress) => void
   ): Promise<UploadResult> {
     try {
-      if (!this.accountId || !this.accessKeyId || !this.secretAccessKey || !this.bucketName) {
-        return {
-          success: false,
-          key: '',
-          error: 'R2 credentials not configured. Please set environment variables.'
-        };
-      }
+      const { uploadUrl, key } = await callFunction<{ uploadUrl: string; key: string }>('r2-presign', {
+        action: 'upload',
+        clubId,
+        kind,
+        fileName: file.name,
+        contentType: file.type,
+      });
 
-      // Generate a unique key for the file
-      const timestamp = Date.now();
-      const key = `${clubName}/${fileType}/${timestamp}-${file.name}`;
+      await putWithProgress(uploadUrl, file, onProgress);
 
-      // For files larger than 100MB, use chunked upload
-      const CHUNK_SIZE = 100 * 1024 * 1024; // 100MB
-      const useChunkedUpload = file.size > CHUNK_SIZE;
+      const { data: auth } = await supabase.auth.getUser();
+      const { error } = await supabase.from(kind).insert({
+        club_id: clubId,
+        file_name: file.name,
+        file_path: key,
+        file_size: file.size,
+        uploaded_by: auth.user?.id,
+      });
+      if (error) throw new Error(`Uploaded, but saving the record failed: ${error.message}`);
 
-      if (useChunkedUpload) {
-        return await this.chunkedUpload(file, key, onProgress);
-      } else {
-        return await this.simpleUpload(file, key, onProgress);
-      }
-    } catch (error: any) {
-      console.error('❌ R2 upload error:', error);
-      return {
-        success: false,
-        key: '',
-        error: error.message || 'Upload failed'
-      };
+      return { success: true, key };
+    } catch (e: any) {
+      console.error('R2 upload failed:', e);
+      return { success: false, key: '', error: e.message || 'Upload failed' };
     }
   }
 
-  /**
-   * Simple upload for smaller files (direct upload)
-   */
-  private async simpleUpload(
-    file: File,
-    key: string,
-    onProgress?: (progress: UploadProgress) => void
-  ): Promise<UploadResult> {
-    try {
-      // In a real implementation, you'd use AWS S3 SDK (R2 is S3-compatible)
-      // For now, this is a placeholder that simulates the upload
-      console.log('📤 Starting simple upload:', key, file.size, 'bytes');
+  /** File paths recorded for a club (reads the DB table, not R2). */
+  async listFiles(clubId: string, kind: Kind): Promise<string[]> {
+    const { data, error } = await supabase.from(kind).select('file_path').eq('club_id', clubId);
+    return error ? [] : (data || []).map((r: { file_path: string }) => r.file_path);
+  }
 
-      // Simulate upload progress
-      for (let i = 0; i <= 100; i += 10) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-        if (onProgress) {
-          onProgress({
-            loaded: (file.size * i) / 100,
-            total: file.size,
-            percentage: i
-          });
-        }
-      }
-
-      const url = this.getPublicUrl(key);
-      
-      return {
-        success: true,
-        key,
-        url
-      };
-    } catch (error: any) {
-      return {
-        success: false,
-        key,
-        error: error.message
-      };
+  /** Short-lived read URLs for files (admins: any file; clients: their own club's files). */
+  async getDownloadUrls(keys: string[]): Promise<Record<string, string>> {
+    const out: Record<string, string> = {};
+    for (let i = 0; i < keys.length; i += 200) {
+      const { urls } = await callFunction<{ urls: Record<string, string> }>('r2-presign', {
+        action: 'download',
+        keys: keys.slice(i, i + 200),
+      });
+      Object.assign(out, urls);
     }
-  }
-
-  /**
-   * Chunked upload for large files
-   */
-  private async chunkedUpload(
-    file: File,
-    key: string,
-    onProgress?: (progress: UploadProgress) => void
-  ): Promise<UploadResult> {
-    try {
-      const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB chunks
-      const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-      
-      console.log('📤 Starting chunked upload:', key, file.size, 'bytes', totalChunks, 'chunks');
-
-      // Simulate chunked upload
-      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-        const start = chunkIndex * CHUNK_SIZE;
-        const end = Math.min(start + CHUNK_SIZE, file.size);
-        file.slice(start, end); // Chunk would be uploaded here in real implementation
-
-        // Simulate uploading this chunk
-        await new Promise(resolve => setTimeout(resolve, 200));
-
-        const percentage = Math.round(((chunkIndex + 1) / totalChunks) * 100);
-        if (onProgress) {
-          onProgress({
-            loaded: end,
-            total: file.size,
-            percentage
-          });
-        }
-      }
-
-      const url = this.getPublicUrl(key);
-      
-      return {
-        success: true,
-        key,
-        url
-      };
-    } catch (error: any) {
-      return {
-        success: false,
-        key,
-        error: error.message
-      };
-    }
-  }
-
-  /**
-   * List files in a club's directory
-   */
-  async listFiles(clubName: string, fileType: 'tiles' | 'metadata'): Promise<string[]> {
-    // Placeholder - in production, this would query R2
-    console.log(`📋 Listing files for ${clubName}/${fileType}`);
-    return [];
-  }
-
-  /**
-   * Get a presigned URL for downloading a file
-   */
-  getDownloadUrl(key: string): string {
-    return this.getPublicUrl(key);
+    return out;
   }
 }
 
 export const r2Service = new R2Service();
-export type { UploadProgress, UploadResult };

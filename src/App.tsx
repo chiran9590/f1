@@ -6,7 +6,6 @@ import ErrorBoundary from './components/ErrorBoundary';
 // Public Pages
 import Home from './pages/Home';
 import LandingPage from './components/LandingPage';
-import MainDashboard from './pages/MainDashboard';
 import About from './pages/About';
 import Services from './pages/Services';
 import Contact from './pages/Contact';
@@ -19,16 +18,17 @@ import OptimizedAdminLogin from './components/OptimizedAdminLogin';
 import AdminLogin from './pages/AdminLogin';
 
 // Dashboard Components
-import DashboardLayout from './pages/DashboardLayout';
 import DashboardHome from './pages/DashboardHome';
 import Profile from './pages/Profile';
 import InstantAnalysis from './pages/InstantAnalysis';
 import ClubHealthMap from './pages/ClubHealthMap';
 
 // Admin Components
-import AdminDashboardHome from './pages/AdminDashboardHome';
-import AdminManageClubs from './pages/AdminManageClubs';
-import SimpleAdminDashboard from './components/SimpleAdminDashboard';
+import AdminLayout from './pages/admin/AdminLayout';
+import AdminOverview from './pages/admin/AdminOverview';
+import AdminUsers from './pages/admin/AdminUsers';
+import AdminClubs from './pages/admin/AdminClubs';
+import AdminUpload from './pages/admin/AdminUpload';
 
 // Post-login portal
 import PostLoginChooser from './pages/PostLoginChooser';
@@ -80,24 +80,15 @@ function App() {
                   </AuthenticatedRoute>
                 } />
                 
-                {/* Admin Dashboard Routes - Protected for Admin Only */}
-                <Route path="/admin" element={
-                  <AdminRoute>
-                    <SimpleAdminDashboard />
-                  </AdminRoute>
-                }>
-                  <Route index element={<SimpleAdminDashboard />} />
-                  <Route path="dashboard" element={<SimpleAdminDashboard />} />
-                  <Route path="users" element={<AdminDashboardHome />} />
-                  <Route path="clubs" element={<AdminManageClubs />} />
-                  <Route path="upload" element={<div className="p-6"><h1 className="text-2xl font-bold">Upload Section</h1><p className="text-gray-600">Admin upload functionality coming soon...</p></div>} />
+                {/* Admin area: layout renders the nested pages through <Outlet /> */}
+                <Route path="/admin" element={<AdminRoute><AdminLayout /></AdminRoute>}>
+                  <Route index element={<AdminOverview />} />
+                  <Route path="dashboard" element={<Navigate to="/admin" replace />} />
+                  <Route path="users" element={<AdminUsers />} />
+                  <Route path="clubs" element={<AdminClubs />} />
+                  <Route path="upload" element={<AdminUpload />} />
                 </Route>
-                <Route path="/admin/dashboard" element={
-                  <AdminRoute>
-                    <SimpleAdminDashboard />
-                  </AdminRoute>
-                } />
-                
+
                 {/* Client Dashboard Routes - Temporarily simplified for testing */}
                 <Route path="/dashboard" element={
                   <ClientRoute>
