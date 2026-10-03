@@ -56,7 +56,7 @@ const OptimizedAdminLogin = () => {
       // Wait a moment for auth context to update, then redirect to admin dashboard
       setTimeout(() => {
         console.log('🔄 Redirecting to admin dashboard...');
-        navigate('/admin/dashboard', { replace: true, state: { loginType: 'admin' } });
+        navigate('/admin', { replace: true, state: { loginType: 'admin' } });
       }, 500);
       
     } catch (error) {

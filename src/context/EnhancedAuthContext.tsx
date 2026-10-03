@@ -247,11 +247,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const adminSignIn = async (email: string, password: string) => {
     try {
       setLoading(true);
-      const { error } = await authService.adminSignIn(email, password);
+      const { user: adminUser, profile: adminProfile, error } = await authService.adminSignIn(email, password);
       
       if (error) {
         console.error('❌ Admin sign in failed:', error);
         return { error };
+      }
+
+      // The database already confirmed role === 'admin'. Set it right away so the
+      // admin route guard doesn't have to wait for the auth listener.
+      if (adminUser && adminProfile) {
+        setUser(adminUser);
+        setProfile(adminProfile);
+        setRole(adminProfile.role);
       }
       
       console.log('✅ Admin sign in successful');

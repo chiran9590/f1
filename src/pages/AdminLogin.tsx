@@ -49,7 +49,7 @@ const AdminLogin = () => {
       showSuccess('Admin Login Successful', 'Welcome to the Admin Panel!');
 
       setTimeout(() => {
-        navigate('/admin/dashboard', { replace: true });
+        navigate('/admin', { replace: true });
       }, 300);
       
     } catch (err: any) {

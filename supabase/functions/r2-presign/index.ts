@@ -45,6 +45,35 @@ Deno.serve(async (req) => {
       return json({ uploadUrl, key, contentType: contentType ?? "application/octet-stream" });
     }
 
+    // ---------- upload-batch (admin): many files at once, keeping their relative paths ----------
+    // tiles must look like  {z}/{x}/{y}.png ; metadata is a plain file name (re-uploading replaces it)
+    if (body.action === "upload-batch") {
+      if (caller.role !== "admin") return json({ error: "Admin role required" }, 403);
+      const { clubId, kind } = body;
+      const paths: string[] = Array.isArray(body.paths) ? body.paths.slice(0, 200) : [];
+      if (!clubId || !["tiles", "metadata"].includes(kind) || paths.length === 0) {
+        return json({ error: "clubId, kind and paths are required" }, 400);
+      }
+      const { data: club } = await caller.admin.from("clubs").select("club_name").eq("id", clubId).maybeSingle();
+      if (!club) return json({ error: "Club not found" }, 404);
+      const slug = slugify(club.club_name);
+
+      const tileRe = /^\d{1,2}\/\d{1,8}\/\d{1,8}\.(png|jpg|jpeg|webp)$/;
+      const nameRe = /^[^\/\\\x00-\x1f]{1,150}$/;
+      const items = [];
+      for (const p of paths) {
+        const ok = kind === "tiles" ? tileRe.test(p) : nameRe.test(p) && p !== ".." && p !== ".";
+        if (!ok) return json({ error: `Not an allowed ${kind} path: ${p}` }, 400);
+        const key = `${slug}/${kind}/${p}`;
+        const uploadUrl = await presignUrl({
+          method: "PUT", host: HOST, path: `/${BUCKET}/${key}`,
+          accessKeyId: KEY_ID, secretAccessKey: SECRET, expiresIn: 3600,
+        });
+        items.push({ path: p, key, uploadUrl });
+      }
+      return json({ items });
+    }
+
     // ---------- download (admin or the club's own client) ----------
     if (body.action === "download") {
       const keys: string[] = Array.isArray(body.keys) ? body.keys.slice(0, 500) : [];

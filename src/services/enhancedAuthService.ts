@@ -88,6 +88,12 @@ class AuthService {
 
       console.log('✅ User created successfully, ID:', data.user.id);
 
+      // Email confirmation is on, so there is no session yet and the browser cannot read or
+      // write `profiles` (RLS). The database trigger already created the profile; we're done.
+      if (!data.session) {
+        return { user: data.user, profile: null, error: null };
+      }
+
       // Step 2: Wait for trigger to create profile
       await new Promise(resolve => setTimeout(resolve, 1000));
       
